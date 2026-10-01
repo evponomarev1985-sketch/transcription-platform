@@ -17,25 +17,39 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        "companies",
-        sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True, nullable=False),
-        sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("normalized_name", sa.String(length=255), nullable=False),
-        sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    op.execute(
+        """
+        CREATE TABLE IF NOT EXISTS companies (
+            id UUID PRIMARY KEY,
+            name VARCHAR(255) NOT NULL,
+            normalized_name VARCHAR(255) NOT NULL,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMPTZ NOT NULL,
+            updated_at TIMESTAMPTZ NOT NULL
+        )
+        """
     )
-    op.create_index("ix_companies_normalized_name", "companies", ["normalized_name"], unique=True)
+    op.execute("CREATE UNIQUE INDEX IF NOT EXISTS ix_companies_normalized_name ON companies (normalized_name)")
 
-    op.add_column("users", sa.Column("first_name", sa.String(length=128), nullable=True))
-    op.add_column("users", sa.Column("last_name", sa.String(length=128), nullable=True))
-    op.add_column("users", sa.Column("company_id", postgresql.UUID(as_uuid=False), nullable=True))
-    op.add_column("users", sa.Column("marketing_consent", sa.Boolean(), nullable=False, server_default=sa.text("false")))
-    op.add_column("users", sa.Column("terms_accepted_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("users", sa.Column("privacy_accepted_at", sa.DateTime(timezone=True), nullable=True))
-    op.create_index("ix_users_company_id", "users", ["company_id"], unique=False)
-    op.create_foreign_key("fk_users_company_id", "users", "companies", ["company_id"], ["id"], ondelete="SET NULL")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name VARCHAR(128)")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name VARCHAR(128)")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS company_id UUID")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_consent BOOLEAN NOT NULL DEFAULT FALSE")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS terms_accepted_at TIMESTAMPTZ")
+    op.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS privacy_accepted_at TIMESTAMPTZ")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_users_company_id ON users (company_id)")
+    op.execute(
+        """
+        DO $$
+        BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_users_company_id') THEN
+                ALTER TABLE users
+                ADD CONSTRAINT fk_users_company_id FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE SET NULL;
+            END IF;
+        END
+        $$;
+        """
+    )
 
     op.execute("""
     UPDATE users
@@ -45,14 +59,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_constraint("fk_users_company_id", "users", type_="foreignkey")
-    op.drop_index("ix_users_company_id", table_name="users")
-    op.drop_column("users", "privacy_accepted_at")
-    op.drop_column("users", "terms_accepted_at")
-    op.drop_column("users", "marketing_consent")
-    op.drop_column("users", "company_id")
-    op.drop_column("users", "last_name")
-    op.drop_column("users", "first_name")
+    op.execute("ALTER TABLE users DROP CONSTRAINT IF EXISTS fk_users_company_id")
+    op.execute("DROP INDEX IF EXISTS ix_users_company_id")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS privacy_accepted_at")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS terms_accepted_at")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS marketing_consent")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS company_id")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS last_name")
+    op.execute("ALTER TABLE users DROP COLUMN IF EXISTS first_name")
 
-    op.drop_index("ix_companies_normalized_name", table_name="companies")
-    op.drop_table("companies")
+    op.execute("DROP INDEX IF EXISTS ix_companies_normalized_name")
+    op.execute("DROP TABLE IF EXISTS companies")

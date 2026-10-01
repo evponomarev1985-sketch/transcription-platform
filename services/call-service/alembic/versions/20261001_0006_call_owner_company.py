@@ -17,12 +17,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("calls", sa.Column("owner_company_id", postgresql.UUID(as_uuid=False), nullable=True))
-    op.add_column("calls", sa.Column("owner_company_name", sa.String(length=255), nullable=True))
-    op.create_index("ix_calls_owner_company_id", "calls", ["owner_company_id"], unique=False)
+    op.execute("ALTER TABLE calls ADD COLUMN IF NOT EXISTS owner_company_id UUID")
+    op.execute("ALTER TABLE calls ADD COLUMN IF NOT EXISTS owner_company_name VARCHAR(255)")
+    op.execute("CREATE INDEX IF NOT EXISTS ix_calls_owner_company_id ON calls (owner_company_id)")
 
 
 def downgrade() -> None:
-    op.drop_index("ix_calls_owner_company_id", table_name="calls")
-    op.drop_column("calls", "owner_company_name")
-    op.drop_column("calls", "owner_company_id")
+    op.execute("DROP INDEX IF EXISTS ix_calls_owner_company_id")
+    op.execute("ALTER TABLE calls DROP COLUMN IF EXISTS owner_company_name")
+    op.execute("ALTER TABLE calls DROP COLUMN IF EXISTS owner_company_id")
