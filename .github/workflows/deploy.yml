@@ -130,7 +130,9 @@ jobs:
       - name: Pull, migrate, and restart services
         run: |
           ssh -i ~/.ssh/id_ed25519 "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-          "echo '${{ secrets.GHCR_READ_TOKEN }}' | docker login ghcr.io -u '${{ secrets.GHCR_USERNAME }}' --password-stdin && \
+          "if [ -z '${{ secrets.GHCR_USERNAME }}' ] || [ -z '${{ secrets.GHCR_READ_TOKEN }}' ]; then echo 'Missing GHCR credentials secrets'; exit 1; fi && \
+           if [ ! -f '${{ secrets.DEPLOY_PATH }}/.env' ]; then echo 'Missing deploy env file at ${{ secrets.DEPLOY_PATH }}/.env'; exit 1; fi && \
+           echo '${{ secrets.GHCR_READ_TOKEN }}' | docker login ghcr.io -u '${{ secrets.GHCR_USERNAME }}' --password-stdin && \
            docker compose \
             --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
             --env-file ${{ secrets.DEPLOY_PATH }}/.env \
