@@ -38,6 +38,7 @@ jobs:
         with:
           context: .
           file: infra/api-gateway/Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-api-gateway:${{ steps.meta.outputs.image_tag }}
 
@@ -46,6 +47,7 @@ jobs:
         with:
           context: frontend
           file: frontend/Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-frontend:${{ steps.meta.outputs.image_tag }}
 
@@ -54,6 +56,7 @@ jobs:
         with:
           context: services/auth-service
           file: services/auth-service/Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-auth-service:${{ steps.meta.outputs.image_tag }}
 
@@ -62,6 +65,7 @@ jobs:
         with:
           context: services/upload-service
           file: services/upload-service/Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-upload-service:${{ steps.meta.outputs.image_tag }}
 
@@ -70,6 +74,7 @@ jobs:
         with:
           context: services/call-service
           file: services/call-service/Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-call-service:${{ steps.meta.outputs.image_tag }}
 
@@ -78,6 +83,7 @@ jobs:
         with:
           context: services/transcription-service
           file: services/transcription-service/Dockerfile
+          platforms: linux/amd64
           push: true
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-transcription-service:${{ steps.meta.outputs.image_tag }}
 
