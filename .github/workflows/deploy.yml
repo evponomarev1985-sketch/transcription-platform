@@ -10,6 +10,9 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
+env:
+  RUN_MIGRATIONS: ${{ vars.RUN_MIGRATIONS || 'true' }}
+
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
@@ -140,20 +143,22 @@ jobs:
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
             pull && \
-           docker compose \
-            --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
-            --env-file ${{ secrets.DEPLOY_PATH }}/.env \
-            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
-            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
-            --project-directory ${{ secrets.DEPLOY_PATH }} \
-            run --rm auth-service alembic upgrade head && \
-           docker compose \
-            --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
-            --env-file ${{ secrets.DEPLOY_PATH }}/.env \
-            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
-            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
-            --project-directory ${{ secrets.DEPLOY_PATH }} \
-            run --rm call-service alembic upgrade head && \
+           if [ '${{ env.RUN_MIGRATIONS }}' = 'true' ]; then \
+             docker compose \
+              --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+              --env-file ${{ secrets.DEPLOY_PATH }}/.env \
+              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
+              --project-directory ${{ secrets.DEPLOY_PATH }} \
+              run --rm auth-service alembic upgrade head && \
+             docker compose \
+              --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+              --env-file ${{ secrets.DEPLOY_PATH }}/.env \
+              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
+              --project-directory ${{ secrets.DEPLOY_PATH }} \
+              run --rm call-service alembic upgrade head; \
+           fi && \
            docker compose \
             --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
             --env-file ${{ secrets.DEPLOY_PATH }}/.env \
