@@ -114,6 +114,7 @@ jobs:
         run: |
           rsync -az --delete \
             --exclude='.git' \
+            --exclude='.env' \
             --exclude='frontend/.nuxt' \
             --exclude='frontend/.output' \
             --exclude='frontend/node_modules' \
