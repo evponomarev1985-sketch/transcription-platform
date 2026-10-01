@@ -78,6 +78,8 @@ class Call(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     owner_user_id: Mapped[str] = mapped_column(UUID(as_uuid=False), nullable=False, index=True)
     owner_login: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    owner_company_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), nullable=True, index=True)
+    owner_company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     source_file_name: Mapped[str] = mapped_column(String(255), nullable=False)
     object_key: Mapped[str] = mapped_column(String(1024), nullable=False, unique=True)

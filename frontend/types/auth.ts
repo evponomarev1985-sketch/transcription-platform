@@ -4,9 +4,14 @@ export interface User {
   id: string
   login: string
   email: string | null
+  first_name: string | null
+  last_name: string | null
+  company_id: string | null
+  company_name: string | null
   role: UserRole
   is_active: boolean
   is_blocked: boolean
+  marketing_consent: boolean
   created_at: string
 }
 

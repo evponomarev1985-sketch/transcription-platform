@@ -38,7 +38,15 @@ SUPPORTED_MIME_TYPES = {
 }
 
 
-def _issue_upload_id(*, user_id: str, object_key: str, file_name: str, language: str) -> str:
+def _issue_upload_id(
+    *,
+    user_id: str,
+    object_key: str,
+    file_name: str,
+    language: str,
+    company_id: str | None,
+    company_name: str | None,
+) -> str:
     now = datetime.now(UTC)
     payload = {
         "typ": "upload_init",
@@ -46,6 +54,8 @@ def _issue_upload_id(*, user_id: str, object_key: str, file_name: str, language:
         "object_key": object_key,
         "file_name": file_name,
         "language": language,
+        "company_id": company_id,
+        "company_name": company_name,
         "iat": int(now.timestamp()),
         "exp": int((now.timestamp()) + 3600),
         "jti": str(uuid4()),
@@ -103,7 +113,12 @@ def init_upload(payload: UploadInitRequest, authorization: str | None = Header(d
 
     object_key = f"uploads/{user_payload['sub']}/{uuid4()}-{payload.file_name}"
     upload_id = _issue_upload_id(
-        user_id=str(user_payload["sub"]), object_key=object_key, file_name=payload.file_name, language=payload.language
+        user_id=str(user_payload["sub"]),
+        object_key=object_key,
+        file_name=payload.file_name,
+        language=payload.language,
+        company_id=str(user_payload.get("company_id") or "").strip() or None,
+        company_name=str(user_payload.get("company_name") or "").strip() or None,
     )
     url = create_presigned_put_url(object_key, payload.mime_type)
     return UploadInitResponse(
@@ -145,6 +160,8 @@ def direct_upload(
     create_payload = {
         "owner_user_id": str(user_payload["sub"]),
         "owner_login": str(user_payload["login"]),
+        "owner_company_id": str(user_payload.get("company_id") or "").strip() or None,
+        "owner_company_name": str(user_payload.get("company_name") or "").strip() or None,
         "title": title,
         "source_file_name": file.filename,
         "object_key": object_key,
@@ -197,6 +214,8 @@ def complete_upload(
     create_payload = {
         "owner_user_id": str(user_payload["sub"]),
         "owner_login": str(user_payload["login"]),
+        "owner_company_id": str(user_payload.get("company_id") or upload_payload.get("company_id") or "").strip() or None,
+        "owner_company_name": str(user_payload.get("company_name") or upload_payload.get("company_name") or "").strip() or None,
         "title": payload.title,
         "source_file_name": payload.file_name,
         "object_key": object_key,

@@ -12,8 +12,15 @@ class LoginRequest(BaseModel):
 
 
 class RegisterRequest(BaseModel):
-    login_or_email: str = Field(min_length=3, max_length=255)
+    first_name: str = Field(min_length=1, max_length=128)
+    last_name: str = Field(min_length=1, max_length=128)
+    work_email: EmailStr
+    company_name: str = Field(min_length=1, max_length=255)
     password: str = Field(min_length=8, max_length=128)
+    password_confirm: str = Field(min_length=8, max_length=128)
+    terms_accepted: bool
+    privacy_accepted: bool
+    marketing_consent: bool = False
 
 
 class RefreshRequest(BaseModel):
@@ -33,10 +40,23 @@ class UserOut(BaseModel):
     id: str
     login: str
     email: str | None
+    first_name: str | None
+    last_name: str | None
+    company_id: str | None
+    company_name: str | None
     role: Literal["USER", "ADMIN"]
     is_active: bool
     is_blocked: bool
+    marketing_consent: bool
     created_at: datetime
+
+
+class UpdateProfileRequest(BaseModel):
+    first_name: str = Field(min_length=1, max_length=128)
+    last_name: str = Field(min_length=1, max_length=128)
+    work_email: EmailStr
+    company_name: str = Field(min_length=1, max_length=255)
+    marketing_consent: bool = False
 
 
 class AuthTokensOut(BaseModel):
@@ -50,16 +70,24 @@ class AuthTokensOut(BaseModel):
 class AdminCreateUserRequest(BaseModel):
     login: str = Field(min_length=3, max_length=128)
     email: EmailStr | None = None
+    first_name: str | None = Field(default=None, min_length=1, max_length=128)
+    last_name: str | None = Field(default=None, min_length=1, max_length=128)
+    company_name: str | None = Field(default=None, min_length=1, max_length=255)
     password: str = Field(min_length=8, max_length=128)
     role: Literal["USER", "ADMIN"] = "USER"
     is_active: bool = True
+    marketing_consent: bool = False
 
 
 class AdminUpdateUserRequest(BaseModel):
     email: EmailStr | None = None
+    first_name: str | None = Field(default=None, min_length=1, max_length=128)
+    last_name: str | None = Field(default=None, min_length=1, max_length=128)
+    company_name: str | None = Field(default=None, min_length=1, max_length=255)
     role: Literal["USER", "ADMIN"] | None = None
     is_active: bool | None = None
     is_blocked: bool | None = None
+    marketing_consent: bool | None = None
     password: str | None = Field(default=None, min_length=8, max_length=128)
 
 

@@ -5,7 +5,7 @@ from sqlalchemy import select
 
 from .config import get_settings
 from .db import Base, SessionLocal, engine
-from .models import User, UserRole
+from .models import Company, User, UserRole
 from .routers import admin, auth
 from .security import hash_password
 
@@ -24,11 +24,21 @@ def startup() -> None:
     try:
         admin_user = db.execute(select(User).where(User.login == settings.auth_bootstrap_admin_login)).scalar_one_or_none()
         if not admin_user and settings.auth_bootstrap_admin_password:
+            admin_company = db.execute(select(Company).where(Company.normalized_name == "platform")).scalar_one_or_none()
+            if not admin_company:
+                admin_company = Company(name="Platform", normalized_name="platform", is_active=True)
+                db.add(admin_company)
+                db.flush()
             db.add(
                 User(
                     login=settings.auth_bootstrap_admin_login,
+                    email=None,
+                    first_name="System",
+                    last_name="Admin",
+                    company_id=admin_company.id,
                     password_hash=hash_password(settings.auth_bootstrap_admin_password),
                     role=UserRole.ADMIN,
+                    marketing_consent=False,
                     is_active=True,
                     is_blocked=False,
                 )

@@ -78,6 +78,11 @@ const onSubmit = handleSubmit(async (values) => {
 
         <PButton type="submit" label="Войти" class="w-full" :loading="isSubmitting" />
       </form>
+
+      <div class="mt-4 text-sm text-slate-600 text-center">
+        Нет аккаунта?
+        <NuxtLink to="/register" class="text-brand-700 hover:underline">Зарегистрироваться</NuxtLink>
+      </div>
     </div>
   </div>
 </template>

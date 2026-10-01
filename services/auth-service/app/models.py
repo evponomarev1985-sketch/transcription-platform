@@ -16,20 +16,47 @@ class UserRole(str, enum.Enum):
     ADMIN = "ADMIN"
 
 
+class Company(Base):
+    __tablename__ = "companies"
+
+    id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    normalized_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    users: Mapped[list[User]] = relationship(back_populates="company")
+
+
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     login: Mapped[str] = mapped_column(String(128), unique=True, nullable=False, index=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    company_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     role: Mapped[UserRole] = mapped_column(Enum(UserRole, name="user_role"), default=UserRole.USER, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    marketing_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    privacy_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), onupdate=lambda: datetime.now(UTC), nullable=False)
 
     sessions: Mapped[list[RefreshSession]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    company: Mapped[Company | None] = relationship(back_populates="users")
 
 
 class RefreshSession(Base):

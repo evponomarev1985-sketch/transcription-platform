@@ -39,7 +39,14 @@ def hash_refresh_token(refresh_token: str) -> str:
     return hashlib.sha256(refresh_token.encode("utf-8")).hexdigest()
 
 
-def create_token_pair(user_id: str, login: str, role: str) -> TokenPair:
+def create_token_pair(
+    user_id: str,
+    login: str,
+    role: str,
+    *,
+    company_id: str | None = None,
+    company_name: str | None = None,
+) -> TokenPair:
     settings = get_settings()
     now = datetime.now(UTC)
 
@@ -47,6 +54,8 @@ def create_token_pair(user_id: str, login: str, role: str) -> TokenPair:
         "sub": user_id,
         "login": login,
         "role": role,
+        "company_id": company_id,
+        "company_name": company_name,
         "typ": "access",
         "iat": int(now.timestamp()),
         "exp": int((now + timedelta(minutes=settings.jwt_access_ttl_minutes)).timestamp()),
@@ -60,6 +69,8 @@ def create_token_pair(user_id: str, login: str, role: str) -> TokenPair:
         "sub": user_id,
         "login": login,
         "role": role,
+        "company_id": company_id,
+        "company_name": company_name,
         "typ": "refresh",
         "iat": int(now.timestamp()),
         "exp": int(refresh_exp.timestamp()),

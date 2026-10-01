@@ -154,6 +154,8 @@ def _call_out(call: Call) -> CallOut:
         source_file_name=call.source_file_name,
         owner_user_id=call.owner_user_id,
         owner_login=call.owner_login,
+        owner_company_id=call.owner_company_id,
+        owner_company_name=call.owner_company_name,
         language=call.language,
         duration_seconds=call.duration_seconds,
         status=call.status.value,  # type: ignore[arg-type]
@@ -219,9 +221,13 @@ def list_calls(
 ) -> CallListOut:
     payload = parse_access_token(authorization)
     filters: list[Any] = [Call.deleted_at.is_(None)]
+    user_company_id = str(payload.get("company_id") or "").strip()
 
     if not _is_admin(payload):
-        filters.append(Call.owner_user_id == str(payload["sub"]))
+        if user_company_id:
+            filters.append(or_(Call.owner_company_id == user_company_id, Call.owner_user_id == str(payload["sub"])))
+        else:
+            filters.append(Call.owner_user_id == str(payload["sub"]))
     elif owner_login:
         filters.append(func.lower(Call.owner_login) == owner_login.lower())
 
@@ -278,6 +284,7 @@ def list_calls(
 @router.get("/{call_id}", response_model=CallOut)
 def get_call(call_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> CallOut:
     payload = parse_access_token(authorization)
+    user_company_id = str(payload.get("company_id") or "").strip()
     call = db.execute(
         select(Call)
         .where(Call.id == call_id)
@@ -289,8 +296,12 @@ def get_call(call_id: str, authorization: str | None = Header(default=None), db:
     ).scalar_one_or_none()
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(payload) and call.owner_user_id != str(payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     from ..models import Checklist
 
@@ -309,11 +320,16 @@ def get_call_comments(
 ) -> list[CallCommentOut]:
     """Return all comment entries for a call (right column in UI)."""
     payload = parse_access_token(authorization)
+    user_company_id = str(payload.get("company_id") or "").strip()
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(payload) and call.owner_user_id != str(payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     results = db.scalars(
         select(CallLabelResult)
@@ -370,11 +386,16 @@ def get_call_comments(
 @router.delete("/{call_id}")
 def delete_call(call_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, str]:
     payload = parse_access_token(authorization)
+    user_company_id = str(payload.get("company_id") or "").strip()
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(payload) and call.owner_user_id != str(payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     call.deleted_at = datetime.now(UTC)
     db.commit()
     return {"status": "ok"}
@@ -383,11 +404,16 @@ def delete_call(call_id: str, authorization: str | None = Header(default=None), 
 @router.post("/{call_id}/retry", response_model=RetryResult)
 def retry_call(call_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> RetryResult:
     payload = parse_access_token(authorization)
+    user_company_id = str(payload.get("company_id") or "").strip()
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(payload) and call.owner_user_id != str(payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     job = db.execute(select(TranscriptionJob).where(TranscriptionJob.call_id == call.id)).scalar_one_or_none()
     if not job:
@@ -428,11 +454,16 @@ def stream_audio(
     db: Session = Depends(get_db),
 ) -> Response:
     payload = parse_access_token(authorization)
+    user_company_id = str(payload.get("company_id") or "").strip()
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(payload) and call.owner_user_id != str(payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     ext = call.source_file_name.lower().rsplit(".", 1)
     mime_by_ext = {
@@ -473,22 +504,32 @@ def stream_audio(
 @router.get("/{call_id}/audio-url")
 def get_audio_url(call_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> dict[str, str]:
     payload = parse_access_token(authorization)
+    user_company_id = str(payload.get("company_id") or "").strip()
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(payload) and call.owner_user_id != str(payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
     return {"url": create_presigned_get_url(call.object_key)}
 
 
 @router.get("/{call_id}/transcript", response_model=TranscriptOut)
 def get_transcript(call_id: str, authorization: str | None = Header(default=None), db: Session = Depends(get_db)) -> TranscriptOut:
     payload = parse_access_token(authorization)
+    user_company_id = str(payload.get("company_id") or "").strip()
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(payload) and call.owner_user_id != str(payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     transcript = (
         db.execute(select(Transcript).where(Transcript.call_id == call.id).options(joinedload(Transcript.segments)))
@@ -530,11 +571,16 @@ def update_segment(
     db: Session = Depends(get_db),
 ) -> dict[str, str]:
     user_payload = parse_access_token(authorization)
+    user_company_id = str(user_payload.get("company_id") or "").strip()
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
-    if not _is_admin(user_payload) and call.owner_user_id != str(user_payload["sub"]):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if not _is_admin(user_payload):
+        if user_company_id:
+            if call.owner_company_id != user_company_id and call.owner_user_id != str(user_payload["sub"]):
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+        elif call.owner_user_id != str(user_payload["sub"]):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
     segment = db.get(TranscriptSegment, segment_id)
     if not segment:

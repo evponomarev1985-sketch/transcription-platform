@@ -24,6 +24,8 @@ ChecklistConditionOperator = Literal["INCLUDE_ANY", "INCLUDE_ALL", "EXCLUDE_ANY"
 class CallCreateInternalRequest(BaseModel):
     owner_user_id: str
     owner_login: str
+    owner_company_id: str | None = None
+    owner_company_name: str | None = None
     title: str = Field(min_length=1, max_length=255)
     source_file_name: str = Field(min_length=1, max_length=255)
     object_key: str
@@ -251,6 +253,8 @@ class CallOut(BaseModel):
     source_file_name: str
     owner_user_id: str
     owner_login: str
+    owner_company_id: str | None = None
+    owner_company_name: str | None = None
     language: str
     duration_seconds: int | None
     status: CallStatus

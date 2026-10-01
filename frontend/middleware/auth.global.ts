@@ -6,7 +6,7 @@ export default defineNuxtRouteMiddleware((to) => {
     auth.hydrate()
   }
 
-  if (to.path === '/login') {
+  if (to.path === '/login' || to.path === '/register') {
     if (auth.isAuthenticated) {
       return navigateTo('/')
     }
