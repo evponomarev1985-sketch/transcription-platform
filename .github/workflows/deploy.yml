@@ -11,7 +11,78 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image_tag: ${{ steps.meta.outputs.image_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tag
+        id: meta
+        run: echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push api-gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/api-gateway/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-api-gateway:${{ steps.meta.outputs.image_tag }}
+
+      - name: Build and push frontend
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-frontend:${{ steps.meta.outputs.image_tag }}
+
+      - name: Build and push auth-service
+        uses: docker/build-push-action@v6
+        with:
+          context: services/auth-service
+          file: services/auth-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-auth-service:${{ steps.meta.outputs.image_tag }}
+
+      - name: Build and push upload-service
+        uses: docker/build-push-action@v6
+        with:
+          context: services/upload-service
+          file: services/upload-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-upload-service:${{ steps.meta.outputs.image_tag }}
+
+      - name: Build and push call-service
+        uses: docker/build-push-action@v6
+        with:
+          context: services/call-service
+          file: services/call-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-call-service:${{ steps.meta.outputs.image_tag }}
+
+      - name: Build and push transcription-service
+        uses: docker/build-push-action@v6
+        with:
+          context: services/transcription-service
+          file: services/transcription-service/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-transcription-service:${{ steps.meta.outputs.image_tag }}
+
   deploy:
+    needs: build-and-push
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -36,18 +107,35 @@ jobs:
             -e "ssh -i ~/.ssh/id_ed25519" \
             ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
 
-      - name: Build, migrate, and restart services
+      - name: Render deploy image env file on server
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" "printf '%s\n' 'REGISTRY=ghcr.io' 'IMAGE_NAMESPACE=${{ github.repository_owner }}/transcription-platform' 'IMAGE_TAG=${{ needs.build-and-push.outputs.image_tag }}' > ${{ secrets.DEPLOY_PATH }}/.deploy-images.env"
+
+      - name: Pull, migrate, and restart services
         run: |
           ssh -i ~/.ssh/id_ed25519 "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
-          "docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+          "echo '${{ secrets.GHCR_READ_TOKEN }}' | docker login ghcr.io -u '${{ secrets.GHCR_USERNAME }}' --password-stdin && \
+           docker compose \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
-            build --no-cache auth-service call-service upload-service transcription-service api-gateway frontend && \
-           docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            pull && \
+           docker compose \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
             run --rm auth-service alembic upgrade head && \
-           docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+           docker compose \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
             run --rm call-service alembic upgrade head && \
-           docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+           docker compose \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
             up -d --force-recreate"

@@ -148,7 +148,8 @@ docker compose -f /home/evponomarev1985/transcription-platform/docker-compose.ym
   - Python compile checks for `auth-service`, `call-service`, `transcription-service`
 - Deploy workflow: `.github/workflows/deploy.yml`
   - trigger: push to `main` or manual run
-  - sync code to VM by rsync
-  - build containers, run Alembic migrations, recreate stack
+  - build images in GitHub Actions and push to GHCR
+  - sync compose/manifests to VM by rsync
+  - pull images on VM, run Alembic migrations, recreate stack
 
 Required GitHub repository secrets are listed in `.github/README-secrets.md`.

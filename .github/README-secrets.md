@@ -6,6 +6,11 @@ Set these repository secrets in GitHub before running deploy workflow:
 - `DEPLOY_USER` — SSH user (example: `evponomarev1985`)
 - `DEPLOY_PATH` — absolute path to project on VM (example: `/home/evponomarev1985/transcription-platform`)
 - `DEPLOY_SSH_PRIVATE_KEY` — private SSH key content for deploy user
+- `GHCR_USERNAME` — GitHub username that can pull from GHCR (example: `evponomarev1985-sketch`)
+- `GHCR_READ_TOKEN` — GitHub token with package read access for GHCR pull on VM
+
+The deploy workflow now builds images in GitHub Actions and pushes to GHCR using tags based on commit SHA.
+VM pulls these images (no local docker build on VM).
 
 Notes:
 

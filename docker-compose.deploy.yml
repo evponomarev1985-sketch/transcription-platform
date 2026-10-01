@@ -1,0 +1,24 @@
+services:
+  api-gateway:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/api-gateway:${IMAGE_TAG}
+    build: null
+
+  frontend:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/frontend:${IMAGE_TAG}
+    build: null
+
+  auth-service:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/auth-service:${IMAGE_TAG}
+    build: null
+
+  upload-service:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/upload-service:${IMAGE_TAG}
+    build: null
+
+  call-service:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/call-service:${IMAGE_TAG}
+    build: null
+
+  transcription-service:
+    image: ${REGISTRY}/${IMAGE_NAMESPACE}/transcription-service:${IMAGE_TAG}
+    build: null
