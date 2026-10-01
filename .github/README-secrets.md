@@ -12,6 +12,15 @@ Set these repository secrets in GitHub before running deploy workflow:
 The deploy workflow now builds images in GitHub Actions and pushes to GHCR using tags based on commit SHA.
 VM pulls these images (no local docker build on VM).
 
+Image naming format in GHCR:
+
+- `ghcr.io/<owner>/transcription-platform-api-gateway:<sha>`
+- `ghcr.io/<owner>/transcription-platform-frontend:<sha>`
+- `ghcr.io/<owner>/transcription-platform-auth-service:<sha>`
+- `ghcr.io/<owner>/transcription-platform-upload-service:<sha>`
+- `ghcr.io/<owner>/transcription-platform-call-service:<sha>`
+- `ghcr.io/<owner>/transcription-platform-transcription-service:<sha>`
+
 Notes:
 
 - Deploy workflow uses `rsync --delete`, so target directory must contain only this project.
