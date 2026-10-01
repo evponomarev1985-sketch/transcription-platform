@@ -1,0 +1,66 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --app-bg: #f4f6f8;
+  --panel-bg: #ffffff;
+  --text-main: #132126;
+  --text-muted: #63717a;
+  --border: #dbe3e8;
+  --accent: #1c7c73;
+}
+
+html,
+body,
+#__nuxt {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: 'IBM Plex Sans', sans-serif;
+  background: linear-gradient(180deg, #f8fafb 0%, #f1f4f7 100%);
+  color: var(--text-main);
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.p-button {
+  font-weight: 500;
+}
+
+.calls-filters .filter-control,
+.calls-filters .filter-control .p-inputtext,
+.calls-filters .filter-control .p-dropdown,
+.calls-filters .filter-control .p-dropdown-label,
+.calls-filters .filter-control .p-inputtext {
+  height: 40px;
+}
+
+.calls-filters .filter-control .p-dropdown {
+  display: flex;
+  align-items: center;
+}
+
+.calls-filters .filter-control .p-dropdown-label {
+  padding-top: 0;
+  padding-bottom: 0;
+  display: flex;
+  align-items: center;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}

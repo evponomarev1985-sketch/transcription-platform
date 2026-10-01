@@ -1,0 +1,53 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        run: |
+          install -m 700 -d ~/.ssh
+          printf "%s" "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Sync project to server
+        run: |
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='frontend/.nuxt' \
+            --exclude='frontend/.output' \
+            --exclude='frontend/node_modules' \
+            --exclude='**/__pycache__' \
+            --exclude='*.pyc' \
+            -e "ssh -i ~/.ssh/id_ed25519" \
+            ./ "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:${{ secrets.DEPLOY_PATH }}/"
+
+      - name: Build, migrate, and restart services
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
+          "docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            --project-directory ${{ secrets.DEPLOY_PATH }} \
+            build --no-cache auth-service call-service upload-service transcription-service api-gateway frontend && \
+           docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            --project-directory ${{ secrets.DEPLOY_PATH }} \
+            run --rm auth-service alembic upgrade head && \
+           docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            --project-directory ${{ secrets.DEPLOY_PATH }} \
+            run --rm call-service alembic upgrade head && \
+           docker compose -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+            --project-directory ${{ secrets.DEPLOY_PATH }} \
+            up -d --force-recreate"

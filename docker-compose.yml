@@ -1,0 +1,135 @@
+services:
+  api-gateway:
+    build:
+      context: .
+      dockerfile: infra/api-gateway/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      - frontend
+      - auth-service
+      - upload-service
+      - call-service
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    environment:
+      - NUXT_PUBLIC_API_BASE=/api/v1
+
+  auth-service:
+    build:
+      context: ./services/auth-service
+      dockerfile: Dockerfile
+    environment:
+      - APP_ENV=dev
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8001
+      - DB_AUTO_CREATE=${AUTH_DB_AUTO_CREATE:-false}
+      - DATABASE_URL=${AUTH_DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TTL_MINUTES=15
+      - JWT_REFRESH_TTL_DAYS=30
+      - AUTH_REGISTRATION_ENABLED=${AUTH_REGISTRATION_ENABLED:-false}
+      - AUTH_BOOTSTRAP_ADMIN_LOGIN=${AUTH_BOOTSTRAP_ADMIN_LOGIN:-admin}
+      - AUTH_BOOTSTRAP_ADMIN_PASSWORD=${AUTH_BOOTSTRAP_ADMIN_PASSWORD:-}
+
+  upload-service:
+    build:
+      context: ./services/upload-service
+      dockerfile: Dockerfile
+    environment:
+      - APP_ENV=dev
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8002
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ALGORITHM=HS256
+      - UPLOAD_SIGNING_SECRET=${UPLOAD_SIGNING_SECRET}
+      - YC_S3_ENDPOINT=${YC_S3_ENDPOINT}
+      - YC_S3_REGION=${YC_S3_REGION}
+      - YC_S3_BUCKET=${YC_S3_BUCKET}
+      - YC_ACCESS_KEY_ID=${YC_ACCESS_KEY_ID}
+      - YC_SECRET_ACCESS_KEY=${YC_SECRET_ACCESS_KEY}
+      - CALL_SERVICE_INTERNAL_URL=http://call-service:8003
+      - CALL_SERVICE_INTERNAL_API_KEY=${CALL_SERVICE_INTERNAL_API_KEY}
+      - YMQ_ENDPOINT_URL=${YMQ_ENDPOINT_URL}
+      - YMQ_QUEUE_URL=${YMQ_QUEUE_URL}
+      - YMQ_REGION=${YMQ_REGION}
+      - YMQ_ACCESS_KEY_ID=${YMQ_ACCESS_KEY_ID}
+      - YMQ_SECRET_ACCESS_KEY=${YMQ_SECRET_ACCESS_KEY}
+      - YC_IAM_TOKEN_SOURCE=${YC_IAM_TOKEN_SOURCE:-auto}
+      - YC_IAM_TOKEN=${YC_IAM_TOKEN:-}
+      - YC_METADATA_TOKEN_URL=${YC_METADATA_TOKEN_URL:-http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token}
+      - YANDEXGPT_FOLDER_ID=${YANDEXGPT_FOLDER_ID:-${SPEECHKIT_FOLDER_ID}}
+      - YANDEXGPT_MODEL_URI=${YANDEXGPT_MODEL_URI:-}
+      - YANDEXGPT_API_URL=${YANDEXGPT_API_URL:-https://llm.api.cloud.yandex.net/foundationModels/v1/completion}
+
+  call-service:
+    build:
+      context: ./services/call-service
+      dockerfile: Dockerfile
+    environment:
+      - APP_ENV=dev
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8003
+      - DB_AUTO_CREATE=${CALLS_DB_AUTO_CREATE:-false}
+      - DATABASE_URL=${CALLS_DATABASE_URL}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ALGORITHM=HS256
+      - INTERNAL_API_KEY=${CALL_SERVICE_INTERNAL_API_KEY}
+      - YC_S3_ENDPOINT=${YC_S3_ENDPOINT}
+      - YC_S3_REGION=${YC_S3_REGION}
+      - YC_S3_BUCKET=${YC_S3_BUCKET}
+      - YC_ACCESS_KEY_ID=${YC_ACCESS_KEY_ID}
+      - YC_SECRET_ACCESS_KEY=${YC_SECRET_ACCESS_KEY}
+      - YMQ_ENDPOINT_URL=${YMQ_ENDPOINT_URL}
+      - YMQ_QUEUE_URL=${YMQ_QUEUE_URL}
+      - YMQ_REGION=${YMQ_REGION}
+      - YMQ_ACCESS_KEY_ID=${YMQ_ACCESS_KEY_ID}
+      - YMQ_SECRET_ACCESS_KEY=${YMQ_SECRET_ACCESS_KEY}
+      - YC_IAM_TOKEN_SOURCE=${YC_IAM_TOKEN_SOURCE:-auto}
+      - YC_IAM_TOKEN=${YC_IAM_TOKEN:-}
+      - YC_METADATA_TOKEN_URL=${YC_METADATA_TOKEN_URL:-http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token}
+      - YANDEXGPT_FOLDER_ID=${YANDEXGPT_FOLDER_ID:-${SPEECHKIT_FOLDER_ID}}
+      - YANDEXGPT_MODEL_URI=${YANDEXGPT_MODEL_URI:-}
+      - YANDEXGPT_API_URL=${YANDEXGPT_API_URL:-https://llm.api.cloud.yandex.net/foundationModels/v1/completion}
+
+  transcription-service:
+    build:
+      context: ./services/transcription-service
+      dockerfile: Dockerfile
+    environment:
+      - APP_ENV=dev
+      - APP_HOST=0.0.0.0
+      - APP_PORT=8004
+      - INTERNAL_API_KEY=${CALL_SERVICE_INTERNAL_API_KEY}
+      - CALL_SERVICE_INTERNAL_URL=http://call-service:8003
+      - YMQ_ENDPOINT_URL=${YMQ_ENDPOINT_URL}
+      - YMQ_QUEUE_URL=${YMQ_QUEUE_URL}
+      - YMQ_REGION=${YMQ_REGION}
+      - YMQ_ACCESS_KEY_ID=${YMQ_ACCESS_KEY_ID}
+      - YMQ_SECRET_ACCESS_KEY=${YMQ_SECRET_ACCESS_KEY}
+      - YC_IAM_TOKEN_SOURCE=${YC_IAM_TOKEN_SOURCE:-auto}
+      - YC_IAM_TOKEN=${YC_IAM_TOKEN:-}
+      - YC_METADATA_TOKEN_URL=${YC_METADATA_TOKEN_URL:-http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token}
+      - YC_METADATA_TIMEOUT_SECONDS=${YC_METADATA_TIMEOUT_SECONDS:-5}
+      - YC_METADATA_REFRESH_MARGIN_SECONDS=${YC_METADATA_REFRESH_MARGIN_SECONDS:-120}
+      - SPEECHKIT_API_VERSION=${SPEECHKIT_API_VERSION:-v3}
+      - SPEECHKIT_FOLDER_ID=${SPEECHKIT_FOLDER_ID}
+      - SPEECHKIT_LONG_RUNNING_URL=${SPEECHKIT_LONG_RUNNING_URL}
+      - SPEECHKIT_V3_RECOGNIZE_FILE_ASYNC_URL=${SPEECHKIT_V3_RECOGNIZE_FILE_ASYNC_URL:-https://stt.api.cloud.yandex.net/stt/v3/recognizeFileAsync}
+      - SPEECHKIT_V3_GET_RECOGNITION_URL=${SPEECHKIT_V3_GET_RECOGNITION_URL:-https://stt.api.cloud.yandex.net/stt/v3/getRecognition}
+      - SPEECHKIT_OPERATION_URL=${SPEECHKIT_OPERATION_URL}
+      - SPEECHKIT_MODEL=${SPEECHKIT_MODEL:-general}
+      - SPEECHKIT_LANGUAGE=${SPEECHKIT_LANGUAGE:-ru-RU}
+      - SPEECHKIT_AUDIO_CHANNEL_COUNT=${SPEECHKIT_AUDIO_CHANNEL_COUNT:-1}
+      - SPEECHKIT_RAW_RESULTS=${SPEECHKIT_RAW_RESULTS:-true}
+      - SPEECHKIT_TEXT_NORMALIZATION_ENABLED=${SPEECHKIT_TEXT_NORMALIZATION_ENABLED:-true}
+      - SPEECHKIT_LITERATURE_TEXT=${SPEECHKIT_LITERATURE_TEXT:-false}
+      - SPEECHKIT_PROFANITY_FILTER=${SPEECHKIT_PROFANITY_FILTER:-false}
+      - SPEECHKIT_SPEAKER_LABELING_ENABLED=${SPEECHKIT_SPEAKER_LABELING_ENABLED:-true}
+      - SPEECHKIT_SUMMARIZATION_ENABLED=${SPEECHKIT_SUMMARIZATION_ENABLED:-true}
+      - SPEECHKIT_SUMMARIZATION_MODEL_URI=${SPEECHKIT_SUMMARIZATION_MODEL_URI:-}
+      - SPEECHKIT_POLL_DELAY_SECONDS=${SPEECHKIT_POLL_DELAY_SECONDS:-15}
