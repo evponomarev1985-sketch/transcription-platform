@@ -132,24 +132,28 @@ jobs:
           "echo '${{ secrets.GHCR_READ_TOKEN }}' | docker login ghcr.io -u '${{ secrets.GHCR_USERNAME }}' --password-stdin && \
            docker compose \
             --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.env \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
             pull && \
            docker compose \
             --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.env \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
             run --rm auth-service alembic upgrade head && \
            docker compose \
             --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.env \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
             run --rm call-service alembic upgrade head && \
            docker compose \
             --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+            --env-file ${{ secrets.DEPLOY_PATH }}/.env \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
