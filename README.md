@@ -151,5 +151,6 @@ docker compose -f /home/evponomarev1985/transcription-platform/docker-compose.ym
   - build images in GitHub Actions and push to GHCR
   - sync compose/manifests to VM by rsync
   - pull images on VM, run Alembic migrations, recreate stack
+  - supports partial deploy via `workflow_dispatch` input `target` (frontend or specific services)
 
 Required GitHub repository secrets are listed in `.github/README-secrets.md`.

@@ -21,6 +21,27 @@ Image naming format in GHCR:
 - `ghcr.io/<owner>/transcription-platform-call-service:<sha>`
 - `ghcr.io/<owner>/transcription-platform-transcription-service:<sha>`
 
+## Partial deploy targets
+
+`Deploy` workflow supports `workflow_dispatch` input `target`:
+
+- `all` (default) — full stack
+- `frontend`
+- `api-gateway`
+- `auth-service`
+- `upload-service`
+- `call-service`
+- `transcription-service`
+- `backend-services` (all backend services + gateway, without frontend)
+
+Behavior:
+
+- Builds and pushes only selected image(s)
+- Pulls/restarts only selected service(s) on VM
+- Runs Alembic migrations only for selected services that own DB schemas:
+  - `auth-service`
+  - `call-service`
+
 Notes:
 
 - Deploy workflow uses `rsync --delete`, so target directory must contain only this project.

@@ -5,6 +5,21 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      target:
+        description: "What to deploy"
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - frontend
+          - api-gateway
+          - auth-service
+          - upload-service
+          - call-service
+          - transcription-service
+          - backend-services
 
 concurrency:
   group: deploy-production
@@ -21,9 +36,64 @@ jobs:
       packages: write
     outputs:
       image_tag: ${{ steps.meta.outputs.image_tag }}
+      compose_services: ${{ steps.select.outputs.compose_services }}
+      build_api_gateway: ${{ steps.select.outputs.build_api_gateway }}
+      build_frontend: ${{ steps.select.outputs.build_frontend }}
+      build_auth_service: ${{ steps.select.outputs.build_auth_service }}
+      build_upload_service: ${{ steps.select.outputs.build_upload_service }}
+      build_call_service: ${{ steps.select.outputs.build_call_service }}
+      build_transcription_service: ${{ steps.select.outputs.build_transcription_service }}
+      migrate_auth: ${{ steps.select.outputs.migrate_auth }}
+      migrate_call: ${{ steps.select.outputs.migrate_call }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Resolve deployment target
+        id: select
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            target="${{ github.event.inputs.target }}"
+          else
+            target="all"
+          fi
+
+          case "$target" in
+            all)
+              services="api-gateway frontend auth-service upload-service call-service transcription-service"
+              ;;
+            backend-services)
+              services="api-gateway auth-service upload-service call-service transcription-service"
+              ;;
+            frontend|api-gateway|auth-service|upload-service|call-service|transcription-service)
+              services="$target"
+              ;;
+            *)
+              echo "Unknown deploy target: $target"
+              exit 1
+              ;;
+          esac
+
+          has_service() {
+            for svc in $services; do
+              if [ "$svc" = "$1" ]; then
+                echo true
+                return
+              fi
+            done
+            echo false
+          }
+
+          echo "compose_services=$services" >> "$GITHUB_OUTPUT"
+          echo "build_api_gateway=$(has_service api-gateway)" >> "$GITHUB_OUTPUT"
+          echo "build_frontend=$(has_service frontend)" >> "$GITHUB_OUTPUT"
+          echo "build_auth_service=$(has_service auth-service)" >> "$GITHUB_OUTPUT"
+          echo "build_upload_service=$(has_service upload-service)" >> "$GITHUB_OUTPUT"
+          echo "build_call_service=$(has_service call-service)" >> "$GITHUB_OUTPUT"
+          echo "build_transcription_service=$(has_service transcription-service)" >> "$GITHUB_OUTPUT"
+
+          echo "migrate_auth=$(has_service auth-service)" >> "$GITHUB_OUTPUT"
+          echo "migrate_call=$(has_service call-service)" >> "$GITHUB_OUTPUT"
 
       - name: Login to GHCR
         uses: docker/login-action@v3
@@ -37,6 +107,7 @@ jobs:
         run: echo "image_tag=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: Build and push api-gateway
+        if: ${{ steps.select.outputs.build_api_gateway == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -46,6 +117,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-api-gateway:${{ steps.meta.outputs.image_tag }}
 
       - name: Build and push frontend
+        if: ${{ steps.select.outputs.build_frontend == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: frontend
@@ -55,6 +127,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-frontend:${{ steps.meta.outputs.image_tag }}
 
       - name: Build and push auth-service
+        if: ${{ steps.select.outputs.build_auth_service == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: services/auth-service
@@ -64,6 +137,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-auth-service:${{ steps.meta.outputs.image_tag }}
 
       - name: Build and push upload-service
+        if: ${{ steps.select.outputs.build_upload_service == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: services/upload-service
@@ -73,6 +147,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-upload-service:${{ steps.meta.outputs.image_tag }}
 
       - name: Build and push call-service
+        if: ${{ steps.select.outputs.build_call_service == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: services/call-service
@@ -82,6 +157,7 @@ jobs:
           tags: ghcr.io/${{ github.repository_owner }}/transcription-platform-call-service:${{ steps.meta.outputs.image_tag }}
 
       - name: Build and push transcription-service
+        if: ${{ steps.select.outputs.build_transcription_service == 'true' }}
         uses: docker/build-push-action@v6
         with:
           context: services/transcription-service
@@ -132,8 +208,10 @@ jobs:
 
       - name: Pull, migrate, and restart services
         run: |
+          DEPLOY_SERVICES="${{ needs.build-and-push.outputs.compose_services }}"
           ssh -i ~/.ssh/id_ed25519 "${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}" \
           "if [ -z '${{ secrets.GHCR_USERNAME }}' ] || [ -z '${{ secrets.GHCR_READ_TOKEN }}' ]; then echo 'Missing GHCR credentials secrets'; exit 1; fi && \
+           if [ -z '${DEPLOY_SERVICES}' ]; then echo 'Deploy services list is empty'; exit 1; fi && \
            if [ ! -f '${{ secrets.DEPLOY_PATH }}/.env' ]; then echo 'Missing deploy env file at ${{ secrets.DEPLOY_PATH }}/.env'; exit 1; fi && \
            echo '${{ secrets.GHCR_READ_TOKEN }}' | docker login ghcr.io -u '${{ secrets.GHCR_USERNAME }}' --password-stdin && \
            docker compose \
@@ -142,22 +220,26 @@ jobs:
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
-            pull && \
+            pull ${DEPLOY_SERVICES} && \
            if [ '${{ env.RUN_MIGRATIONS }}' = 'true' ]; then \
-             docker compose \
-              --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
-              --env-file ${{ secrets.DEPLOY_PATH }}/.env \
-              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
-              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
-              --project-directory ${{ secrets.DEPLOY_PATH }} \
-              run --rm auth-service alembic upgrade head && \
-             docker compose \
-              --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
-              --env-file ${{ secrets.DEPLOY_PATH }}/.env \
-              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
-              -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
-              --project-directory ${{ secrets.DEPLOY_PATH }} \
-              run --rm call-service alembic upgrade head; \
+             if [ '${{ needs.build-and-push.outputs.migrate_auth }}' = 'true' ]; then \
+               docker compose \
+                --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+                --env-file ${{ secrets.DEPLOY_PATH }}/.env \
+                -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+                -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
+                --project-directory ${{ secrets.DEPLOY_PATH }} \
+                run --rm auth-service alembic upgrade head; \
+             fi && \
+             if [ '${{ needs.build-and-push.outputs.migrate_call }}' = 'true' ]; then \
+               docker compose \
+                --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
+                --env-file ${{ secrets.DEPLOY_PATH }}/.env \
+                -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
+                -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
+                --project-directory ${{ secrets.DEPLOY_PATH }} \
+                run --rm call-service alembic upgrade head; \
+             fi; \
            fi && \
            docker compose \
             --env-file ${{ secrets.DEPLOY_PATH }}/.deploy-images.env \
@@ -165,4 +247,4 @@ jobs:
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.yml \
             -f ${{ secrets.DEPLOY_PATH }}/docker-compose.deploy.yml \
             --project-directory ${{ secrets.DEPLOY_PATH }} \
-            up -d --force-recreate"
+            up -d --force-recreate ${DEPLOY_SERVICES}"
