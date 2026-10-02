@@ -3,11 +3,11 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
-from ..models import CallLabelResult, Checklist, LabelDefinition, LabelKind
+from ..models import Call, CallLabelResult, Checklist, LabelDefinition, LabelKind
 from ..schemas import (
     ChecklistCreateRequest,
     ChecklistLabelValueOptionOut,
@@ -22,14 +22,81 @@ from ..security import parse_access_token
 router = APIRouter(prefix="/api/v1/checklists", tags=["checklists"])
 
 
-def _ensure_admin(authorization: str | None) -> None:
-    payload = parse_access_token(authorization)
-    if str(payload.get("role")) != "ADMIN":
+def _auth_payload(authorization: str | None) -> dict:
+    return parse_access_token(authorization)
+
+
+def _is_admin(payload: dict) -> bool:
+    return str(payload.get("role")) == "ADMIN"
+
+
+def _company_scope(payload: dict) -> tuple[str | None, str | None]:
+    company_id = str(payload.get("company_id") or "").strip() or None
+    company_name = str(payload.get("company_name") or "").strip() or None
+    return company_id, company_name
+
+
+def _ensure_admin(payload: dict) -> None:
+    if not _is_admin(payload):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
 
 
-def _ensure_auth(authorization: str | None) -> None:
-    parse_access_token(authorization)
+def _checklist_list_query_for_payload(payload: dict):
+    query = select(Checklist).order_by(Checklist.created_at.desc())
+    company_id, _ = _company_scope(payload)
+    if company_id:
+        return query.where(or_(Checklist.owner_company_id == company_id, Checklist.owner_company_id.is_(None)))
+    if _is_admin(payload):
+        return query
+    return query.where(Checklist.owner_company_id.is_(None))
+
+
+def _label_scope_filter_for_payload(payload: dict):
+    company_id, _ = _company_scope(payload)
+    if company_id:
+        return or_(LabelDefinition.owner_company_id == company_id, LabelDefinition.owner_company_id.is_(None))
+    return LabelDefinition.owner_company_id.is_(None)
+
+
+def _ensure_strict_company_checklist_access(payload: dict, checklist: Checklist) -> None:
+    company_id, _ = _company_scope(payload)
+    if company_id:
+        if checklist.owner_company_id == company_id:
+            return
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if _is_admin(payload) and checklist.owner_company_id is None:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+def _label_scope_filter_for_owner_company(owner_company_id: str | None):
+    if owner_company_id:
+        return or_(LabelDefinition.owner_company_id == owner_company_id, LabelDefinition.owner_company_id.is_(None))
+    return LabelDefinition.owner_company_id.is_(None)
+
+
+def _ensure_label_ids_accessible_for_owner_company(
+    db: Session,
+    label_ids: set[str],
+    owner_company_id: str | None,
+) -> set[str]:
+    if not label_ids:
+        return set()
+
+    existing = db.scalars(
+        select(LabelDefinition.id).where(
+            LabelDefinition.id.in_(list(label_ids)),
+            _label_scope_filter_for_owner_company(owner_company_id),
+        )
+    ).all()
+    found = set(existing)
+    missing = sorted(label_ids - found)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Unknown or inaccessible label ids in checklist conditions: {missing}",
+        )
+    return found
 
 
 def _collect_label_refs_from_lines(lines: list[dict]) -> set[str]:
@@ -101,7 +168,13 @@ def _enforce_required_values_for_flag_value(lines: list[dict], label_kind_by_id:
                 )
 
 
-def _validate_checklist_config(db: Session, *, apply_filters: list[dict], questions: list[dict]) -> None:
+def _validate_checklist_config(
+    db: Session,
+    *,
+    apply_filters: list[dict],
+    questions: list[dict],
+    owner_company_id: str | None,
+) -> None:
     label_ids: set[str] = set(_collect_label_refs_from_lines(apply_filters))
     for question in questions:
         answers = question.get("answers") or []
@@ -111,20 +184,18 @@ def _validate_checklist_config(db: Session, *, apply_filters: list[dict], questi
     if not label_ids:
         return
 
-    existing = db.scalars(select(LabelDefinition.id).where(LabelDefinition.id.in_(list(label_ids)))).all()
-    found = set(existing)
-    missing = sorted(label_ids - found)
-    if missing:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Unknown label ids in checklist conditions: {missing}",
-        )
+    _ensure_label_ids_accessible_for_owner_company(db, label_ids, owner_company_id)
 
 
-def _label_kind_by_id_map(db: Session, label_ids: set[str]) -> dict[str, str]:
+def _label_kind_by_id_map(db: Session, label_ids: set[str], owner_company_id: str | None) -> dict[str, str]:
     if not label_ids:
         return {}
-    defs = db.scalars(select(LabelDefinition).where(LabelDefinition.id.in_(list(label_ids)))).all()
+    defs = db.scalars(
+        select(LabelDefinition).where(
+            LabelDefinition.id.in_(list(label_ids)),
+            _label_scope_filter_for_owner_company(owner_company_id),
+        )
+    ).all()
     return {d.id: d.kind.value for d in defs}
 
 
@@ -137,12 +208,17 @@ def _normalize_questions(questions: list[dict]) -> list[dict]:
     return normalized
 
 
-def _normalize_questions_with_conditions(db: Session, questions: list[dict], apply_filters: list[dict]) -> list[dict]:
+def _normalize_questions_with_conditions(
+    db: Session,
+    questions: list[dict],
+    apply_filters: list[dict],
+    owner_company_id: str | None,
+) -> list[dict]:
     label_ids: set[str] = set(_collect_label_refs_from_lines(apply_filters))
     for q in questions:
         for answer in (q.get("answers") or []):
             label_ids |= _collect_label_refs_from_lines(answer.get("conditions") or [])
-    kind_map = _label_kind_by_id_map(db, label_ids)
+    kind_map = _label_kind_by_id_map(db, label_ids, owner_company_id)
     _enforce_required_values_for_flag_value(apply_filters, kind_map)
 
     normalized_questions: list[dict] = []
@@ -178,8 +254,8 @@ def list_checklists(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChecklistListOut:
-    _ensure_auth(authorization)
-    items = db.scalars(select(Checklist).order_by(Checklist.created_at.desc())).all()
+    auth_payload = _auth_payload(authorization)
+    items = db.scalars(_checklist_list_query_for_payload(auth_payload)).all()
     return ChecklistListOut(items=[_out(x) for x in items])
 
 
@@ -188,18 +264,36 @@ def checklist_label_values(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChecklistLabelValuesOut:
-    _ensure_auth(authorization)
-    defs = db.scalars(select(LabelDefinition).where(LabelDefinition.is_active.is_(True))).all()
+    auth_payload = _auth_payload(authorization)
+    company_id, _ = _company_scope(auth_payload)
+    user_id = str(auth_payload.get("sub") or "").strip()
+
+    defs_stmt = select(LabelDefinition).where(LabelDefinition.is_active.is_(True))
+    label_scope_filter = _label_scope_filter_for_payload(auth_payload)
+    if label_scope_filter is not None:
+        defs_stmt = defs_stmt.where(label_scope_filter)
+    defs = db.scalars(defs_stmt).all()
 
     items: dict[str, list[ChecklistLabelValueOptionOut]] = {}
     for ld in defs:
         values_counter: dict[str, int] = {}
-        rows = db.scalars(
+        rows_stmt = (
             select(CallLabelResult)
+            .join(Call, Call.id == CallLabelResult.call_id)
             .where(CallLabelResult.label_id == ld.id, CallLabelResult.matched.is_(True))
+            .where(Call.deleted_at.is_(None))
             .order_by(CallLabelResult.evaluated_at.desc())
             .limit(5000)
-        ).all()
+        )
+
+        if company_id:
+            rows_stmt = rows_stmt.where(or_(Call.owner_company_id == company_id, Call.owner_user_id == user_id))
+        elif _is_admin(auth_payload):
+            pass
+        else:
+            rows_stmt = rows_stmt.where(Call.owner_user_id == user_id)
+
+        rows = db.scalars(rows_stmt).all()
 
         if ld.kind == LabelKind.FLAG:
             values_counter[ld.name] = len(rows)
@@ -230,14 +324,31 @@ def create_checklist(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChecklistOut:
-    _ensure_admin(authorization)
+    auth_payload = _auth_payload(authorization)
+    _ensure_admin(auth_payload)
+    owner_company_id, owner_company_name = _company_scope(auth_payload)
+    if not owner_company_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Company context is required")
+
     apply_filters = _normalize_apply_filters([x.model_dump() for x in payload.apply_filters])
-    questions = _normalize_questions_with_conditions(db, [x.model_dump() for x in payload.questions], apply_filters)
-    _validate_checklist_config(db, apply_filters=apply_filters, questions=questions)
+    questions = _normalize_questions_with_conditions(
+        db,
+        [x.model_dump() for x in payload.questions],
+        apply_filters,
+        owner_company_id,
+    )
+    _validate_checklist_config(
+        db,
+        apply_filters=apply_filters,
+        questions=questions,
+        owner_company_id=owner_company_id,
+    )
 
     checklist = Checklist(
         name=payload.name,
         description=payload.description,
+        owner_company_id=owner_company_id,
+        owner_company_name=owner_company_name,
         is_active=payload.is_active,
         config_json=json.dumps({"apply_filters": apply_filters, "questions": questions}, ensure_ascii=False),
     )
@@ -254,10 +365,12 @@ def update_checklist(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> ChecklistOut:
-    _ensure_admin(authorization)
+    auth_payload = _auth_payload(authorization)
+    _ensure_admin(auth_payload)
     checklist = db.get(Checklist, checklist_id)
     if not checklist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checklist not found")
+    _ensure_strict_company_checklist_access(auth_payload, checklist)
 
     cfg = json.loads(checklist.config_json or "{}")
     apply_filters = cfg.get("apply_filters") or []
@@ -271,10 +384,21 @@ def update_checklist(
         checklist.is_active = payload.is_active
     if payload.apply_filters is not None:
         apply_filters = _normalize_apply_filters([x.model_dump() for x in payload.apply_filters])
+    owner_company_id = str(checklist.owner_company_id or "").strip() or None
     if payload.questions is not None:
-        questions = _normalize_questions_with_conditions(db, [x.model_dump() for x in payload.questions], apply_filters)
+        questions = _normalize_questions_with_conditions(
+            db,
+            [x.model_dump() for x in payload.questions],
+            apply_filters,
+            owner_company_id,
+        )
 
-    _validate_checklist_config(db, apply_filters=apply_filters, questions=questions)
+    _validate_checklist_config(
+        db,
+        apply_filters=apply_filters,
+        questions=questions,
+        owner_company_id=owner_company_id,
+    )
     checklist.config_json = json.dumps({"apply_filters": apply_filters, "questions": questions}, ensure_ascii=False)
 
     db.commit()
@@ -288,9 +412,11 @@ def delete_checklist(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    _ensure_admin(authorization)
+    auth_payload = _auth_payload(authorization)
+    _ensure_admin(auth_payload)
     checklist = db.get(Checklist, checklist_id)
     if not checklist:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Checklist not found")
+    _ensure_strict_company_checklist_access(auth_payload, checklist)
     db.delete(checklist)
     db.commit()

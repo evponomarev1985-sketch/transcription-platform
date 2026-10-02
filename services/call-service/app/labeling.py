@@ -8,10 +8,11 @@ from collections.abc import Sequence
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from .models import (
+    Call,
     CallLabel,
     CallLabelResult,
     LabelDefinition,
@@ -69,6 +70,26 @@ def _coerce_matched_flag(value: object) -> bool:
 
 def _has_extracted_value(*, value_number: float | None, value_text: str | None) -> bool:
     return value_number is not None or bool(str(value_text or "").strip())
+
+
+def _rule_scope_filter_for_call(owner_company_id: str | None):
+    if owner_company_id:
+        return or_(LabelRule.owner_company_id == owner_company_id, LabelRule.owner_company_id.is_(None))
+    return LabelRule.owner_company_id.is_(None)
+
+
+def _label_scope_filter_for_call(owner_company_id: str | None):
+    if owner_company_id:
+        return or_(LabelDefinition.owner_company_id == owner_company_id, LabelDefinition.owner_company_id.is_(None))
+    return LabelDefinition.owner_company_id.is_(None)
+
+
+def _label_allowed_for_call(label: LabelDefinition | None, owner_company_id: str | None) -> bool:
+    if label is None:
+        return False
+    if owner_company_id:
+        return label.owner_company_id in {owner_company_id, None}
+    return label.owner_company_id is None
 
 
 # ── upsert helpers ────────────────────────────────────────────────────────────
@@ -179,11 +200,15 @@ def apply_keyword_rules_for_call(
     segments: Sequence[TranscriptSegment],
 ) -> list[str]:
     """Apply all enabled KEYWORD rules; write results to call_label_results."""
+    call = db.get(Call, call_id)
+    if not call or call.deleted_at is not None:
+        return []
+    owner_company_id = str(call.owner_company_id or "").strip() or None
+    scope_filter = _rule_scope_filter_for_call(owner_company_id)
+
     keyword_rule_ids = list(
         db.scalars(
             select(LabelRule.id).where(
-                LabelRule.is_enabled.is_(True),
-                LabelRule.deleted_at.is_(None),
                 LabelRule.rule_type == LabelRuleType.KEYWORD,
             )
         ).all()
@@ -204,6 +229,7 @@ def apply_keyword_rules_for_call(
             LabelRule.is_enabled.is_(True),
             LabelRule.deleted_at.is_(None),
             LabelRule.rule_type == LabelRuleType.KEYWORD,
+            scope_filter,
         )
     ).all()
 
@@ -221,6 +247,9 @@ def apply_keyword_rules_for_call(
         label: LabelDefinition | None = None
         if rule.label_id:
             label = db.get(LabelDefinition, rule.label_id)
+        if label and not _label_allowed_for_call(label, owner_company_id):
+            log.warning("Keyword rule %s references foreign-company label %s, skipping", rule.id, label.id)
+            continue
 
         _upsert_result(
             db,
@@ -246,6 +275,12 @@ def apply_llm_rule_matches(
 ) -> list[str]:
     """Persist LLM rule results from transcription-service into call_label_results."""
     applied: list[str] = []
+    call = db.get(Call, call_id)
+    if not call or call.deleted_at is not None:
+        return []
+    owner_company_id = str(call.owner_company_id or "").strip() or None
+    scope_filter = _rule_scope_filter_for_call(owner_company_id)
+    label_scope_filter = _label_scope_filter_for_call(owner_company_id)
 
     def _extract_expected_text_values_from_prompt(prompt_text: str) -> list[str]:
         values: list[str] = []
@@ -358,6 +393,13 @@ def apply_llm_rule_matches(
         if not rule or rule.deleted_at is not None or not rule.is_enabled:
             log.warning("LLM match references unknown rule_id=%s, skipping", rule_id)
             continue
+        if owner_company_id:
+            if rule.owner_company_id not in {owner_company_id, None}:
+                log.warning("LLM match references foreign-company rule_id=%s, skipping", rule_id)
+                continue
+        elif rule.owner_company_id is not None:
+            log.warning("LLM match references non-global rule_id=%s without company context, skipping", rule_id)
+            continue
 
         matched = _coerce_matched_flag(item.get("matched", False))
         comment = str(item.get("comment") or "").strip() or None
@@ -388,6 +430,8 @@ def apply_llm_rule_matches(
             raw_label_id = str(item["label_id"]).strip()
             try:
                 label = db.get(LabelDefinition, str(UUID(raw_label_id)))
+                if label and not _label_allowed_for_call(label, owner_company_id):
+                    label = None
             except ValueError:
                 log.warning("LLM match has invalid label_id=%r for rule_id=%s", raw_label_id, rule_id)
 
@@ -396,6 +440,7 @@ def apply_llm_rule_matches(
                 select(LabelDefinition)
                 .join(LabelRuleDefinition, LabelRuleDefinition.label_id == LabelDefinition.id)
                 .where(LabelRuleDefinition.rule_id == rule_id)
+                .where(label_scope_filter)
             ).all()
             label_candidates: list[str] = []
             if value_text:
@@ -413,12 +458,15 @@ def apply_llm_rule_matches(
 
         if label is None and rule.label_id:
             label = db.get(LabelDefinition, rule.label_id)
+            if label and not _label_allowed_for_call(label, owner_company_id):
+                label = None
 
         if kind_from_cfg == "FLAG" and matched:
             allowed = db.scalars(
                 select(LabelDefinition)
                 .join(LabelRuleDefinition, LabelRuleDefinition.label_id == LabelDefinition.id)
                 .where(LabelRuleDefinition.rule_id == rule_id)
+                .where(label_scope_filter)
             ).all()
             allowed_names = {ld.name.strip().casefold() for ld in allowed}
             actual_value = str(value_text or "").strip().casefold()

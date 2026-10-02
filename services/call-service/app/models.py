@@ -56,6 +56,8 @@ class Checklist(Base):
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner_company_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), nullable=True, index=True)
+    owner_company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     config_json: Mapped[str] = mapped_column(Text, nullable=False, default="{}")
     created_at: Mapped[datetime] = mapped_column(
@@ -205,7 +207,9 @@ class LabelDefinition(Base):
     __tablename__ = "label_definitions"
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
-    code: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    owner_company_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), nullable=True, index=True)
+    owner_company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    code: Mapped[str] = mapped_column(String(128), nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     kind: Mapped[LabelKind] = mapped_column(Enum(LabelKind, name="label_kind"), nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -233,6 +237,8 @@ class LabelRule(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=False), primary_key=True, default=lambda: str(uuid4()))
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    owner_company_id: Mapped[str | None] = mapped_column(UUID(as_uuid=False), nullable=True, index=True)
+    owner_company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # legacy free-text — nullable going forward, kept for old rules
     label_value: Mapped[str | None] = mapped_column(String(128), nullable=True)
     # FK to primary label definition

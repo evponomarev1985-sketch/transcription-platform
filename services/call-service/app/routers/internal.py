@@ -3,8 +3,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from ..db import get_db
@@ -50,7 +50,7 @@ def create_call(payload: CallCreateInternalRequest, db: Session = Depends(get_db
 
 
 @router.get("/calls/{call_id}")
-def get_call_internal(call_id: str, db: Session = Depends(get_db)) -> dict[str, str]:
+def get_call_internal(call_id: str, db: Session = Depends(get_db)) -> dict[str, str | None]:
     call = db.get(Call, call_id)
     if not call or call.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
@@ -60,15 +60,20 @@ def get_call_internal(call_id: str, db: Session = Depends(get_db)) -> dict[str, 
         "object_bucket": call.object_bucket,
         "source_file_name": call.source_file_name,
         "language": call.language,
+        "owner_company_id": call.owner_company_id,
+        "owner_company_name": call.owner_company_name,
     }
 
 
 @router.get("/label-rules/llm-enabled")
-def get_llm_rules_internal(db: Session = Depends(get_db)) -> dict[str, list[dict]]:
+def get_llm_rules_internal(
+    owner_company_id: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+) -> dict[str, list[dict]]:
     from ..models import LabelDefinition, LabelRule, LabelRuleDefinition, LabelRuleType
     import json
 
-    rules = db.scalars(
+    query = (
         select(LabelRule)
         .where(
             LabelRule.is_enabled.is_(True),
@@ -76,7 +81,19 @@ def get_llm_rules_internal(db: Session = Depends(get_db)) -> dict[str, list[dict
             LabelRule.rule_type == LabelRuleType.LLM,
         )
         .order_by(LabelRule.created_at.asc())
-    ).all()
+    )
+    normalized_company_id = str(owner_company_id or "").strip()
+    if normalized_company_id:
+        label_scope_filter = or_(LabelDefinition.owner_company_id == normalized_company_id, LabelDefinition.owner_company_id.is_(None))
+    else:
+        label_scope_filter = LabelDefinition.owner_company_id.is_(None)
+
+    if normalized_company_id:
+        query = query.where(or_(LabelRule.owner_company_id == normalized_company_id, LabelRule.owner_company_id.is_(None)))
+    else:
+        query = query.where(LabelRule.owner_company_id.is_(None))
+
+    rules = db.scalars(query).all()
     items: list[dict] = []
     for rule in rules:
         cfg = json.loads(rule.config_json or "{}")
@@ -87,7 +104,7 @@ def get_llm_rules_internal(db: Session = Depends(get_db)) -> dict[str, list[dict
         allowed_labels = db.scalars(
             select(LabelDefinition)
             .join(LabelRuleDefinition, LabelRuleDefinition.label_id == LabelDefinition.id)
-            .where(LabelRuleDefinition.rule_id == rule.id)
+            .where(LabelRuleDefinition.rule_id == rule.id, label_scope_filter)
             .order_by(LabelRuleDefinition.sort_order.asc())
         ).all()
         primary = allowed_labels[0] if allowed_labels else None
@@ -96,7 +113,7 @@ def get_llm_rules_internal(db: Session = Depends(get_db)) -> dict[str, list[dict
             resolved_kind = kind_from_cfg
         else:
             resolved_kind = primary.kind.value if primary else "FLAG"
-        resolved_label_value = primary.name if primary else (rule.name if resolved_kind == "COMMENT" else (rule.label_value or ""))
+        resolved_label_value = primary.name if primary else (rule.name if resolved_kind == "COMMENT" else "")
 
         items.append({
             "id": rule.id,

@@ -8,7 +8,7 @@ from uuid import UUID
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from ..config import get_settings
@@ -39,6 +39,59 @@ def _ensure_admin(authorization: str | None) -> None:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
 
 
+def _auth_payload(authorization: str | None) -> dict:
+    return parse_access_token(authorization)
+
+
+def _is_admin(payload: dict) -> bool:
+    return str(payload.get("role")) == "ADMIN"
+
+
+def _company_scope(payload: dict) -> tuple[str | None, str | None]:
+    company_id = str(payload.get("company_id") or "").strip() or None
+    company_name = str(payload.get("company_name") or "").strip() or None
+    return company_id, company_name
+
+
+def _rule_list_query_for_payload(payload: dict):
+    query = (
+        select(LabelRule)
+        .where(LabelRule.deleted_at.is_(None))
+        .options(selectinload(LabelRule.allowed_label_definitions).selectinload(LabelRuleDefinition.label))
+        .order_by(LabelRule.created_at.desc())
+    )
+    company_id, _ = _company_scope(payload)
+    if company_id:
+        return query.where(or_(LabelRule.owner_company_id == company_id, LabelRule.owner_company_id.is_(None)))
+    if _is_admin(payload):
+        return query
+    return query.where(LabelRule.owner_company_id.is_(None))
+
+
+def _ensure_strict_company_rule_access(payload: dict, rule: LabelRule) -> None:
+    company_id, _ = _company_scope(payload)
+    if company_id:
+        if rule.owner_company_id == company_id:
+            return
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+    if _is_admin(payload) and rule.owner_company_id is None:
+        return
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
+
+
+def _ensure_label_access_for_company(label_defs: list[LabelDefinition], owner_company_id: str | None) -> None:
+    allowed_company_ids: set[str | None] = {None}
+    if owner_company_id:
+        allowed_company_ids.add(owner_company_id)
+
+    foreign = [ld.id for ld in label_defs if ld.owner_company_id not in allowed_company_ids]
+    if foreign:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"Selected labels are not available for this company: {foreign}",
+        )
+
+
 def _label_def_out(ld: LabelDefinition) -> LabelDefinitionOut:
     return LabelDefinitionOut(
         id=ld.id,
@@ -53,9 +106,17 @@ def _label_def_out(ld: LabelDefinition) -> LabelDefinitionOut:
 
 def _rule_out(rule: LabelRule) -> LabelRuleOut:
     cfg = json.loads(rule.config_json or "{}")
+    owner_company_id = str(rule.owner_company_id or "").strip() or None
+
+    def _label_allowed_for_rule(label: LabelDefinition) -> bool:
+        if owner_company_id:
+            return label.owner_company_id in {owner_company_id, None}
+        return label.owner_company_id is None
+
     label_defs = [
         _label_def_out(rd.label)
         for rd in sorted(rule.allowed_label_definitions, key=lambda x: x.sort_order)
+        if rd.label is not None and _label_allowed_for_rule(rd.label)
     ]
     primary_label = label_defs[0] if label_defs else None
     cfg_kind = str(cfg.get("kind") or "").upper()
@@ -451,15 +512,10 @@ def list_rules(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> LabelRuleListOut:
-    _ensure_admin(authorization)
-    rules = db.scalars(
-        select(LabelRule)
-        .where(LabelRule.deleted_at.is_(None))
-        .options(
-            selectinload(LabelRule.allowed_label_definitions).selectinload(LabelRuleDefinition.label)
-        )
-        .order_by(LabelRule.created_at.desc())
-    ).all()
+    payload = _auth_payload(authorization)
+    if not _is_admin(payload):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+    rules = db.scalars(_rule_list_query_for_payload(payload)).all()
     return LabelRuleListOut(items=[_rule_out(r) for r in rules])
 
 
@@ -469,13 +525,19 @@ def create_rule(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> LabelRuleOut:
-    _ensure_admin(authorization)
+    auth_payload = _auth_payload(authorization)
+    if not _is_admin(auth_payload):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
+    owner_company_id, owner_company_name = _company_scope(auth_payload)
+    if not owner_company_id:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Company context is required")
     if payload.kind == "COMMENT":
         label_defs: list[LabelDefinition] = []
     else:
         if not payload.label_ids:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="At least one label is required")
         label_defs = _resolve_label_ids(db, payload.label_ids)
+        _ensure_label_access_for_company(label_defs, owner_company_id)
     _validate_labels_for_rule(label_defs)
     _ensure_payload_kind_matches_labels(payload.kind, label_defs)
     effective_kind = _resolve_rule_kind_for_request(payload.kind, label_defs)
@@ -484,6 +546,8 @@ def create_rule(
 
     rule = LabelRule(
         name=payload.name,
+        owner_company_id=owner_company_id,
+        owner_company_name=owner_company_name,
         # keep legacy non-null label_value compatibility in existing databases
         label_value=(label_defs[0].name if label_defs else (payload.name if effective_kind == "COMMENT" else "")),
         rule_type=LabelRuleType(payload.rule_type),
@@ -509,10 +573,13 @@ def update_rule(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> LabelRuleOut:
-    _ensure_admin(authorization)
+    payload_auth = _auth_payload(authorization)
+    if not _is_admin(payload_auth):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     rule = _load_rule_with_labels(db, rule_id)
     if not rule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    _ensure_strict_company_rule_access(payload_auth, rule)
 
     existing_kind = _rule_kind_from_config_or_labels(rule)
 
@@ -552,6 +619,8 @@ def update_rule(
                 raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="At least one label is required")
         else:
             label_defs = _resolve_label_ids(db, payload.label_ids)
+            owner_company_id = str(rule.owner_company_id or "").strip() or None
+            _ensure_label_access_for_company(label_defs, owner_company_id)
             _validate_labels_for_rule(label_defs)
             primary_kind = label_defs[0].kind.value if label_defs else None
             if primary_kind and primary_kind != existing_kind:
@@ -574,10 +643,13 @@ def toggle_rule(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ) -> LabelRuleOut:
-    _ensure_admin(authorization)
+    payload = _auth_payload(authorization)
+    if not _is_admin(payload):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     rule = _load_rule_with_labels(db, rule_id)
     if not rule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    _ensure_strict_company_rule_access(payload, rule)
     rule.is_enabled = not rule.is_enabled
     db.commit()
     rule = _load_rule_with_labels(db, rule_id)
@@ -590,10 +662,13 @@ def delete_rule(
     authorization: str | None = Header(default=None),
     db: Session = Depends(get_db),
 ):
-    _ensure_admin(authorization)
+    payload = _auth_payload(authorization)
+    if not _is_admin(payload):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
     rule = _load_rule_with_labels(db, rule_id)
     if not rule:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Rule not found")
+    _ensure_strict_company_rule_access(payload, rule)
     rule.is_enabled = False
     rule.deleted_at = datetime.now(UTC)
     db.commit()
@@ -606,9 +681,14 @@ def validate_prompt(
     db: Session = Depends(get_db),
 ) -> ValidatePromptOut:
     """Call YandexGPT with sample transcript and check response format."""
-    _ensure_admin(authorization)
+    payload_auth = _auth_payload(authorization)
+    if not _is_admin(payload_auth):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin only")
 
     kind, label_id, label_def = _resolve_rule_kind_for_validate(db, payload.kind, payload.label_id)
+    owner_company_id, _ = _company_scope(payload_auth)
+    if label_def:
+        _ensure_label_access_for_company([label_def], owner_company_id)
 
     allowed_values_for_flag: list[str] = [label_def.name] if label_def else []
     if kind == "FLAG" and payload.label_ids:
@@ -622,6 +702,7 @@ def validate_prompt(
                     detail=f"Invalid label id format in label_ids: {lid}",
                 ) from exc
         defs = db.scalars(select(LabelDefinition).where(LabelDefinition.id.in_(normalized_ids))).all()
+        _ensure_label_access_for_company(list(defs), owner_company_id)
         if defs:
             allowed_values_for_flag = [d.name for d in defs]
     if kind == "FLAG" and not allowed_values_for_flag:

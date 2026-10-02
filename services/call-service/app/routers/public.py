@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime
+from collections.abc import Sequence
 from typing import Any, Literal
 from uuid import uuid4
 
@@ -13,7 +14,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..checklists import evaluate_checklists_for_call
 from ..db import get_db
-from ..models import Call, CallLabelResult, CallStatus, JobStatus, LabelKind, Transcript, TranscriptSegment, TranscriptionJob
+from ..models import Call, CallLabelResult, CallStatus, Checklist, JobStatus, LabelKind, Transcript, TranscriptSegment, TranscriptionJob
 from ..queue import publish_message
 from ..schemas import (
     CallCommentOut,
@@ -141,7 +142,7 @@ def _call_out(call: Call) -> CallOut:
                 seen_names.add(lbl.label_value)
                 label_names.append(lbl.label_value)
 
-    checklists = call._checklists_for_evaluation if hasattr(call, "_checklists_for_evaluation") else []
+    checklists = getattr(call, "_checklists_for_evaluation", [])
     checklist_results = evaluate_checklists_for_call(
         call_id=call.id,
         checklists=checklists,
@@ -168,6 +169,17 @@ def _call_out(call: Call) -> CallOut:
         labels=sorted(label_names),
         checklist_results=checklist_results,
     )
+
+
+def _checklists_for_call_company(all_active_checklists: Sequence[Checklist], call: Call) -> list[Checklist]:
+    owner_company_id = str(call.owner_company_id or "").strip() or None
+    if owner_company_id:
+        return [
+            checklist
+            for checklist in all_active_checklists
+            if checklist.owner_company_id in {owner_company_id, None}
+        ]
+    return [checklist for checklist in all_active_checklists if checklist.owner_company_id is None]
 
 
 def _normalize_speaker_token(label: str | None) -> str:
@@ -270,13 +282,11 @@ def list_calls(
         .limit(size)
     ).all()
 
-    from ..models import Checklist
-
     active_checklists = db.scalars(
         select(Checklist).where(Checklist.is_active.is_(True)).order_by(Checklist.created_at.asc())
     ).all()
     for call in rows:
-        setattr(call, "_checklists_for_evaluation", active_checklists)
+        setattr(call, "_checklists_for_evaluation", _checklists_for_call_company(active_checklists, call))
 
     return CallListOut(items=[_call_out(c) for c in rows], page=page, size=size, total=int(total))
 
@@ -303,12 +313,10 @@ def get_call(call_id: str, authorization: str | None = Header(default=None), db:
         elif call.owner_user_id != str(payload["sub"]):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")
 
-    from ..models import Checklist
-
     active_checklists = db.scalars(
         select(Checklist).where(Checklist.is_active.is_(True)).order_by(Checklist.created_at.asc())
     ).all()
-    setattr(call, "_checklists_for_evaluation", active_checklists)
+    setattr(call, "_checklists_for_evaluation", _checklists_for_call_company(active_checklists, call))
     return _call_out(call)
 
 

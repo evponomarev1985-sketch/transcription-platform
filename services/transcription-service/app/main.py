@@ -88,7 +88,8 @@ def _handle_submit(message: dict) -> None:
     _call_service_post(f"/internal/v1/jobs/{job_id}/mark-processing")
     call = _call_service_get_call(call_id)
     audio_uri = f"https://storage.yandexcloud.net/{call['object_bucket']}/{call['object_key']}"
-    llm_rules = get_enabled_llm_rules() if settings.speechkit_api_version.lower() == "v3" else []
+    owner_company_id = str(call.get("owner_company_id") or "").strip() or None
+    llm_rules = get_enabled_llm_rules(owner_company_id=owner_company_id) if settings.speechkit_api_version.lower() == "v3" else []
     llm_rules = [rule for rule in llm_rules if str(rule.get("prompt", "")).strip()]
 
     try:
@@ -139,9 +140,10 @@ def _handle_check_result(message: dict) -> None:
         _call_service_post(f"/internal/v1/jobs/{job_id}/fail", {"error_message": err})
         return
 
-    llm_rules = get_enabled_llm_rules() if settings.speechkit_api_version.lower() == "v3" else []
-    normalized = normalize_segments_with_rules(op, llm_rules=llm_rules, operation_id=str(operation_id))
     call = _call_service_get_call(str(message["call_id"]))
+    owner_company_id = str(call.get("owner_company_id") or "").strip() or None
+    llm_rules = get_enabled_llm_rules(owner_company_id=owner_company_id) if settings.speechkit_api_version.lower() == "v3" else []
+    normalized = normalize_segments_with_rules(op, llm_rules=llm_rules, operation_id=str(operation_id))
     llm_matches = normalized.get("llm_rule_matches", [])
     if settings.speechkit_api_version.lower() == "v3" and not llm_matches and llm_rules:
         llm_matches = extract_llm_rule_matches_from_v3(str(operation_id))
